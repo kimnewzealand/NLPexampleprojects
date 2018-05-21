@@ -1,0 +1,253 @@
+---
+title: "Basic Text Mining using UDpipe - ABC Headlines "
+author: "kimnewzealand"
+date: "21 May 2018"
+output: html_notebook
+---
+
+## Synopsis
+
+The purpose of this project is to produce a pipeline for text mining with the 'UDPipe' 'NLP' toolkit, using R.
+
+- Import and load the data 
+- Create data summaries
+- Annotate the text in one step to perform the tokenisation, tagging, lemmatization, using the udpipe R package 
+- Frequency statistics of words and nouns using the udpipe R package 
+- Keywords detection and correlations using the udpipe R package 
+- Visualisation of co-occurrences using the udpipe and ggraph R package 
+
+
+This project will not include advanced topic modeling and training of annotation models in UDpipe.
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Load Packages
+
+```{r load packages, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+# Packages for loading data
+library(readxl)
+library(httr)
+# Packages for manipulating data
+library(stringr)
+library(lubridate)
+# Packages for NLP
+library(udpipe)
+library(cleanNLP)
+# Packages for visualisation
+library(igraph)
+library(ggraph)
+library(ggplot2)
+```
+
+## Load Data
+
+The [A Million News Headlines dataset](https://www.kaggle.com/therohk/million-headlines/data) is easy to load with the read_csv function from the [readr](https://cran.r-project.org/web/packages/readr/index.html) R package.
+
+> This contains data of news headlines published over a period of 15 years. From the reputable Australian news source ABC (Australian Broadcasting Corp.) 
+Site: http://www.abc.net.au/ 
+Prepared by Rohit Kulkarni
+
+These files have been downloaded into a local directory first to agree to the terms of use.
+
+```{r load data, message=FALSE, include=FALSE}
+setwd("~/Validly projects")
+# Read in the check in data
+abc <- read_csv("abcnews-date-text.csv")
+```
+
+
+## Data Summary
+
+Let's take a look at a summary of the ABC headline data.
+
+```{r data format}
+# Change the date to a date format
+abc$publish_date <- as.Date(as.character(abc$publish_date), format = '%Y%m%d')
+# Add new columns for the year, month and day using the lubridate R package
+abc <- abc %>%  
+      mutate(year = lubridate::year(abc$publish_date),
+             month = lubridate::month(abc$publish_date),
+             day = lubridate::day(abc$publish_date))
+# Take a look at the first rows in the  dataset
+head(abc)
+```
+Let's take a look at the number of articles per year.
+
+```{r count year}
+# Count the number of articles per date
+count_year <- abc %>% 
+      group_by(year) %>% 
+      count() %>% 
+      arrange(desc(year))
+count_year
+```
+  
+## Annotate the Text
+
+Let's use the udpipe package following the [udpipe vignettes](https://cran.r-project.org/web/packages/udpipe/vignettes/).
+
+Using this package, we do not need to tokenise the text or remove the stopwords in separate steps. The package allows you to do tokenisation, tagging, lemmatization and dependency parsing with the udpipe_annotate function. 
+
+Since this is a large dataset, we will use a subset of articles from 2017. For the year 2017, there were `r count_year[count_year$year==2017,]` articles.
+
+```{r abc2017}
+abc2017 <- abc[abc$year==2017,]$headline_text
+# Remove the abc dataset to save space in memory
+rm(abc)
+```
+
+
+```{r annotate, message=FALSE, warning=FALSE, include=FALSE}
+# Load the udpipe english pre-trained model 
+ud_model <- udpipe_download_model(language = "english")
+ud_model <- udpipe_load_model(ud_model$file_model)
+# Annotate a subset of the abctext.
+x <- udpipe_annotate(ud_model, x = abc2017, doc_id = seq(1,length(abc2017)))
+x <- as.data.frame(x)
+# Let's take a look at the dataframe
+str(x)
+```
+
+The resulting data.frame has a field called upos which is the Universal Parts of Speech tag and also a field called lemma which is the root form of each token in the text. We will use these fields for basic data analysis.
+
+## Frequency Statistics
+
+```{r freq stats}
+# Let's take a look at the basic frequency statistics of the upos
+freqstats <- txt_freq(x$upos)
+ggplot(freqstats, aes(x=reorder(key,freq),y=freq, fill=freq)) + 
+             geom_bar(stat="identity") + 
+             coord_flip() +
+      xlab("Key") + 
+      ylab("Frequency") + 
+      ggtitle("UPOS (Universal Parts of Speech) Frequency") +
+      labs(fill="Frequency")
+
+```
+The most frequent words are nouns then verbs. Since the text has been annotated we can take a look at the words by upos.
+
+Let's look at the frequency of the nouns.
+
+```{r freq nouns}
+#Let's take a look at the basic frequency statistics of the nouns in the upos
+freqnoun <- txt_freq(subset(x, upos %in% c("NOUN"))$token)
+freqnoun %>% filter(freq>400) %>% 
+      ggplot(aes(x=reorder(key,freq),y=freq, fill=freq)) + 
+             geom_bar(stat="identity") + 
+             coord_flip() +
+      xlab("Key") + 
+      ylab("Frequency") + 
+      ggtitle("Most Frequent Nouns") +
+      labs(fill="Frequency")
+
+```
+
+## Key word detection
+
+Next let's take a look at the keyword frequency to get some more context and themes from the words in the text. We will use the method of Parts of Speech phrase sequence detection.
+
+```{r ks}
+# Let's take a look at the basic frequency statistics of the nouns in the upos
+x$phrase_tag <- as_phrasemachine(x$upos, type = "upos")
+keywords <- keywords_phrases(x = x$phrase_tag, term = tolower(x$token), 
+                          pattern = "(A|N)*N(P+D*(A|N)*N)*", 
+                          is_regex = TRUE, detailed = FALSE)
+keywords %>% filter(ngram > 1 & freq >100) %>% 
+      ggplot(aes(x=reorder(keyword,freq),y=freq, fill=freq)) + 
+             geom_bar(stat="identity") + 
+             coord_flip() +
+      xlab("Key") + 
+      ylab("Frequency") + 
+      ggtitle("Keywords - Simple Noun Phrases") +
+      labs(fill="Frequency")
+# Remove large dataframe to save memory
+rm(keywords)
+```
+
+
+## Keyword Detection and Correlations
+
+Keyword correlations indicate how terms are just together in a same document/sentence. While co-occurrences focus on frequency, correlation measures between two terms can also be high even if two terms occur only a small number of times but always appear together.
+
+```{r}
+x$id <- unique_identifier(x, fields = c("sentence_id", "doc_id"))
+dtm <- subset(x, upos %in% c("NOUN", "ADJ"))
+dtm <- document_term_frequencies(dtm, document = "id", term = "lemma")
+dtm <- document_term_matrix(dtm)
+dtm <- dtm_remove_lowfreq(dtm, minfreq = 5)
+termcorrelations <- dtm_cor(dtm)
+corr_cooc <- as_cooccurrence(termcorrelations)
+corr_cooc <- subset(corr_cooc, term1 < term2 & abs(cooc) > 0.2)
+corr_cooc <- corr_cooc[order(abs(corr_cooc$cooc), decreasing = TRUE), ]
+head(corr_cooc,15)
+```
+  
+
+```{r wordnetwork plot}
+wordnetwork <- corr_cooc %>% filter(cooc>0.80)
+wordnetwork <- graph_from_data_frame(wordnetwork)
+ggraph(wordnetwork, layout = "fr")  +
+  geom_edge_link(aes(width = cooc, edge_alpha = cooc), edge_colour = "green") +
+      geom_node_point(size = 3) +
+  geom_node_text(aes(label = name), col = "darkblue", repel = TRUE,
+      point.padding = unit(0.2, "lines")) +
+  theme_graph() +
+  theme(legend.position = "none") +
+  labs(title = "Keyword Correlations Nouns and Adjective")
+# Save space in memory by removing large dataframes
+rm(termcorrelations)
+rm(dtm)
+rm(corr_cooc)
+```
+
+These correlations include the stories of Tanja Ebert who disappeared, the Sydney Mardi Gras and the Duchess of Cambridge
+
+## Co-occurances
+
+Co-occurrences networks are a visualisation of potential relationships between entities such as people to see how words are used either in the same sentence or next to each other. This uses the relevant Parts of Speech tags.
+
+```{r cooc}
+# Create a co-occurance dataframe
+cooc <- cooccurrence(x = subset(x, upos %in% c("NOUN", "ADJ")), 
+                     term = "lemma", 
+                     group = c("doc_id"))
+
+# Create a co-occurance dataframe
+cooc1 <- cooccurrence(x = subset(x, upos %in% c("NOUN", "VERB")), 
+                     term = "lemma", 
+                     group = c("doc_id"))
+```
+  
+Next lets visualise this co-occurrence network using the [ggraph](https://cran.r-project.org/web/packages/ggraph/index.html) R package.
+
+```{r wordnetwork plot1, message=FALSE, warning=FALSE}
+wordnetwork <- cooc %>% filter(cooc>30)
+wordnetwork <- graph_from_data_frame(wordnetwork)
+ggraph(wordnetwork, layout = "fr") +
+  geom_edge_link(aes(width = cooc, edge_alpha = cooc), edge_colour = "green") +
+  geom_node_text(aes(label = name), col = "darkblue", size = 3) +
+  theme_graph() +
+  theme(legend.position = "none") +
+  labs(title = "Co-occurrences of Nouns and Adjectives")
+```
+
+This network plot has neighbourhoods of nouns and adjectives words used together such as Donald Trump, same sex marriage, cricket and a larger neighbourhood of terms linked to police.
+
+
+```{r wordnetwork plot2, message=FALSE, warning=FALSE}
+wordnetwork <- cooc1 %>% filter(cooc>30)
+wordnetwork <- graph_from_data_frame(wordnetwork)
+ggraph(wordnetwork, layout = "fr") +
+  geom_edge_link(aes(width = cooc, edge_alpha = cooc), edge_colour = "green") +
+  geom_node_text(aes(label = name), col = "darkblue", size = 3) +
+  theme_graph() +
+  theme(legend.position = "none") +
+  labs(title = "Co-occurrences of Nouns and  Verbs")
+```
+  
+This network plot has neighbourhoods of nouns and verbs used together such as world cup and cricket test and then a larger neighbourhood of terms linked to police, election, murder charge, same sex marriage, North Korea and Trump.
+
+
