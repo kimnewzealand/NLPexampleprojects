@@ -1,7 +1,7 @@
 ---
 title: "Twitter Analysis of FOSS4G_SotM_Oceania Conference 2018 "
 author: "kimnewzealand"
-date: "30 August 2017"
+date: "29 November 2018"
 output: html_document
 ---
 
@@ -52,19 +52,14 @@ Next convert the list of tweets to a dataframe.
 tweets_df <- twListToDF(tweets)
 # Take a look at the first 6 tweets in the dataframe using head function
 head(tweets_df)
-# To reproduce the plots using the data retrieved on the 291118, read in the saved dataframe tweets_df_291118.csv
-# tweets_df <- read_csv("tweets_df_291118.csv")
 # Add TweetOrigin variable with Tweet, Retweet column using stringr R package as the existing isRetweet column doesn't appear have the correct categorisation.
 tweets_df <- tweets_df %>% 
       mutate(TweetOrigin=ifelse(str_detect(text,"RT"),"Retweet","Tweet"))
-# Convert the longitude and latitide to numeric variables
-tweets_df$latitude <- as.numeric(tweets_df$latitude)
-tweets_df$longitude <- as.numeric(tweets_df$longitude)
 ```
 
 ## Data Exploration
 
-Now take a look at the number of tweets per person/organisation by counting the tweets by screenName
+Now take a look at the number of tweets per person/organisation by counting the tweets by screenName variable.
 
 ```{r tweet freq}
 # Calculate a frequency table of the tweets wi
