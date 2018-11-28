@@ -62,7 +62,7 @@ tweets_df <- tweets_df %>%
 Now take a look at the number of tweets per person/organisation by counting the tweets by screenName variable.
 
 ```{r tweet freq}
-# Calculate a frequency table of the tweets wi
+# Calculate a frequency table of the tweets with a TotalTweets variable
 tweets_freq <- tweets_df %>%
       count(screenName,TweetOrigin) %>% 
       spread(key = TweetOrigin,value=n,fill=0) %>%
@@ -70,7 +70,7 @@ tweets_freq <- tweets_df %>%
 # View the layout of the table
 tweets_freq
 
-# Create a frequency plot of the tweets, ordered from largest to smallest, with cutoff total tweets of 6 and coloured by the TweetOrigin
+# Create a frequency plot of the total tweets, ordered from largest to smallest, with cutoff total tweets of 6 and coloured by the TweetOrigin
 freq_plot <- tweets_freq %>% 
       filter(TotalTweets>5)  %>% 
       ggplot(aes(reorder(screenName,TotalTweets),TotalTweets)) +
