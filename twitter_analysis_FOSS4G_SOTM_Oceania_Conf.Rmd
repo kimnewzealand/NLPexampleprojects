@@ -1,0 +1,95 @@
+---
+title: "Twitter Analysis of FOSS4G_SotM_Oceania Conference 2018 "
+author: "kimnewzealand"
+date: "30 August 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+# Load the tidyverse metapackage for data manipulation
+library(tidyverse)
+# Load twitter packages. 
+# Note if twitteR functions do not work then reinstall packages and latest twitteR direct from github
+# install.packages(c("devtools", "rjson", "bit64", "httr"))
+# install.packages("devtools"); library(devtools)
+# install_github("geoffjentry/twitteR")
+library(twitteR)
+library(ROAuth)
+```
+
+## Import Data 
+
+Using the [twitteR](https://cran.r-project.org/web/packages/twitteR/README.html) R package we can access the Twitter API and retrieve tweets for the conference #FOSS4G_SotM_Oceania.
+
+The Twitter API has limitations as  per the documentation:
+> Note that while searchTwitter will wrap an arbitrary number of actual
+search calls to provide the number of tweets requested, the Twitter API has
+limitations on just how much it will actually return. In general you can only go
+back a handful of days worth of tweets.
+
+```{r retrieve tweets}
+# Twitter authentication using private API_key variable saved in separate markdown document
+# setup_twitter_oauth("API key", "API secret", "Access token", "Access secret")
+# Retrieve most recent tweets using the searchTwitter function
+tweets <- searchTwitter("FOSS4G_SotM_Oceania",  n=2000,resultType = 'recent')
+# Print the actual number of tweets retrieved
+length(tweets)
+# Take a look at the first 6 tweets using head function to check that it has retrieved what we can see on Twitter
+head(tweets)
+```
+
+
+## Data Cleaning
+
+Next convert the list of tweets to a dataframe.
+
+```{r dataframe}
+# Convert List of tweets to a dataframe
+tweets_df <- twListToDF(tweets)
+# Take a look at the first 6 tweets in the dataframe using head function
+head(tweets_df)
+# To reproduce the plots using the data retrieved on the 291118, read in the saved dataframe tweets_df_291118.csv
+# tweets_df <- read_csv("tweets_df_291118.csv")
+# Add TweetOrigin variable with Tweet, Retweet column using stringr R package as the existing isRetweet column doesn't appear have the correct categorisation.
+tweets_df <- tweets_df %>% 
+      mutate(TweetOrigin=ifelse(str_detect(text,"RT"),"Retweet","Tweet"))
+# Convert the longitude and latitide to numeric variables
+tweets_df$latitude <- as.numeric(tweets_df$latitude)
+tweets_df$longitude <- as.numeric(tweets_df$longitude)
+```
+
+## Data Exploration
+
+Now take a look at the number of tweets per person/organisation by counting the tweets by screenName
+
+```{r tweet freq}
+# Calculate a frequency table of the tweets wi
+tweets_freq <- tweets_df %>%
+      count(screenName,TweetOrigin) %>% 
+      spread(key = TweetOrigin,value=n,fill=0) %>%
+      mutate(TotalTweets=Retweet+Tweet)
+# View the layout of the table
+tweets_freq
+
+# Create a frequency plot of the tweets, ordered from largest to smallest, with cutoff total tweets of 6 and coloured by the TweetOrigin
+freq_plot <- tweets_freq %>% 
+      filter(TotalTweets>5)  %>% 
+      ggplot(aes(reorder(screenName,TotalTweets),TotalTweets)) +
+      geom_col(aes(fill=Retweet)) +
+      scale_fill_gradient(low = "deepskyblue", high = "gold",
+  space = "Lab", na.value = "grey50", guide = "colourbar",
+  aesthetics = "fill") +
+      coord_flip() +
+        geom_text(aes(label = TotalTweets), nudge_y = 8, color =  "grey50") +
+      xlab("Twitter Screen Name") + 
+      ylab("Total Tweets") +
+      ggtitle("#FOSS4G_SOTM_OCEANIA 2018 Conference Most Tweeted") +
+      labs(caption="Source: Last 1548 tweets extracted from Twitter API on 29/11/18")
+freq_plot
+ggsave("Freq_Plot_FOSS4G_SOTM_Oceania_Conf.jpg",freq_plot)
+```
+
