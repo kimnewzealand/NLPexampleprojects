@@ -1,0 +1,284 @@
+---
+title: "What if We Take the Cup out of Melbourne?"
+date: '2019-05-02'
+slug: sydney-fc
+tags:
+- R
+- Viz
+categories: Post
+---
+
+
++ [Introduction](#introduction)
++ [Data](#data)
++ [Data Summary](#data-summary)
++ [Tidytext Analysis](#tidytext-data-analysis)
++ [Data Cleaning](#data-cleaning)
++ [Data Visualisation](#data-visualisation)
++ [Conclusions](#conclusions)
++ [References](#references)
+
+## Introduction
+
+Word associations can be created using word vectors with relatively simple linear algebra following Julia Silge's blog Word Vectors with Tidy Data Principles.
+
+This approach is a step beyond of a simple word cloud using word counts but not as complex as a word2vec. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+```{r load packages, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidytext)
+library(widyr)
+library(irlba)
+library(broom)
+options(stringsasFactors = FALSE)
+```
+
+## Data
+
+The dataset contains headlines published over a period of seventeen years from Australian Broadcasting Corp (ABC) news are freely available [One Million News Headlines](https://www.kaggle.com/therohk/million-headlines).
+
+```{r import data}
+# Import offline news query
+news <- readr::read_csv(here::here("blogdown_source/data/abcnews.csv"))
+```
+
+## Tidytext Analysis
+
+### Generate Ngrams and Probabilities
+
+We will generate unigrams, bigrams and trigrams with the original posts. With these ngrams we will calculate the word counts and probabilities.
+
+**Unigrams**
+
+Calculate unigram probabilities (used to normalize skipgram probabilities later). This is based the count and how often the word occurs ie the probability from the text contents.
+
+```{r unigrams}
+# Create a post id
+news$postID <- row.names(news)
+# First convert the posts into tidytext format
+tidy_posts <- news %>%
+    unnest_tokens(word, headline_text)  %>%
+    # Remove stopwords
+    anti_join(get_stopwords()) %>%
+    # Remove null for empty contents
+    filter(word != "null")
+# Now calculate the unigram probabilies
+unigram_probs <- tidy_posts %>%
+    dplyr::count(word, sort = TRUE) %>%
+    mutate(p = n / sum(n)) %>%
+    # Remove words that occur only once
+    filter(n>1)
+# View the unigrams
+unigram_probs %>%
+  head(15)
+```
+
+The most common word is police, which may be as expected with news reporting. The other unigram words are not very meaningful.
+
+**Bigrams**
+
+Now do the same for for 2 word ie bigram combinations.
+
+```{r bigrams}
+# Calculate bigram probabilities
+tidy_posts_bigrams <- news     %>%
+    unnest_tokens(bigram, headline_text, token = "ngrams",n_min=2,n=2)
+# Separate a character column into multiple columns using a regular expression separator
+bigrams_separated <- tidy_posts_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+# Remove stopwords
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word)
+# Calculate new bigram counts
+bigram_counts <- bigrams_filtered %>%
+  dplyr::count(word1, word2, sort = TRUE)
+# Unite multiple columns into one by pasting strings together
+bigrams_united <- bigrams_filtered %>%
+  unite(bigram, word1, word2, sep = " ")
+# Calculate the probabilities from the counts
+bigram_probs <-   bigrams_united %>%
+    dplyr::count(bigram, sort = TRUE) %>%
+    mutate(p = n / sum(n)) %>%
+    # Remove words that occur only once
+    filter(n>1) %>%
+  drop_na()
+# View the bigrams
+bigram_probs %>%
+  head(40)
+```
+
+The most common bigram refers to country hour, which is an [ABC radio show](https://www.abc.net.au/radio/programs/). The other bigrams have some meaning, including reference to police and events that have happened in the Gold Coast and Broken Hill.
+
+**Trigrams**
+
+Now do the same for for 3 word ie trigram combinations.
+
+```{r trigrams}
+# Calculate bigram probabilities. First convert the posts into tidytext format
+tidy_posts_trigrams <- news %>%
+    unnest_tokens(trigram, headline_text, token = "ngrams",n_min=3,n=3)
+trigram_probs <- tidy_posts_trigrams %>%
+    dplyr::count(trigram, sort = TRUE) %>%
+    mutate(p = n / sum(n)) %>%
+    # Remove words that occur only once
+    filter(n>1) %>%
+  drop_na()
+# View the trigrams
+trigram_probs %>%
+  head(15)
+```
+
+The trigrams now extract general word combinations rather than context.
+
+**Skipgrams**
+
+Now calculate the skipgram probabilities or how often we find each word next to every other word within the context window. Here use the unigrams.
+
+```{r skipgrams unigrams}
+# Now calculate the skipgram probabilities. Create context window with length 6
+tidy_skipgrams <- news %>%
+    unnest_tokens(ngram, headline_text, token = "ngrams", n=6) %>%
+    mutate(ngramID = row_number()) %>%
+    tidyr::unite(skipgramID, postID, ngramID) %>%
+    unnest_tokens(word, ngram)
+# Calculate probabilities
+skipgram_probs <- tidy_skipgrams %>%
+    pairwise_count(word, skipgramID, diag = TRUE, sort = TRUE) %>%
+    mutate(p = n / sum(n))
+# Normalize probabilities
+normalized_prob <- skipgram_probs %>%
+    filter(n > 4) %>%
+    rename(word1 = item1, word2 = item2) %>%
+    left_join(unigram_probs %>%
+                  select(word1 = word, p1 = p),
+              by = "word1") %>%
+    left_join(unigram_probs %>%
+                  select(word2 = word, p2 = p),
+              by = "word2") %>%
+    mutate(p_together = p / p1 / p2)
+```
+
+**Word Probabilities**
+
+View the probability of the city words in the context window of other words.
+- sydney
+- melbourne
+
+```{r sydney probability}
+# The variable p_together here describes the probability the word2 occurs within the context window of word1.
+# A more instructive and useful type of output can be created by filtering this dataframe for an individual word- let's try "sydney":
+normalized_prob %>%
+    filter(word1 == "sydney") %>%
+    arrange(-p_together) %>%
+  select(-p,-p1,-p2)
+```
+
+```{r melbourne}
+normalized_prob %>%
+    filter(word1 == c("melbourne")) %>%
+    arrange(-p_together) %>%
+  select(-p,-p1,-p2)
+```
+
+**SVD**
+
+Use Simple singular value decomposition (SVD) to reduce the dimensionality of the large matrix to an SVD matrix where each row is a word vector or eigenvector.
+
+```{r SVD }
+# Simple singular value decomposition from the irlba package.
+pmi_matrix <- normalized_prob %>%
+    mutate(pmi = log10(p_together)) %>%
+    cast_sparse(word1, word2, pmi)
+# Remove missing data
+pmi_matrix@x[is.na(pmi_matrix@x)] <- 0
+# Run SVD
+pmi_svd <- irlba(pmi_matrix, 256, maxit = 500)
+# Next we output the word vectors:
+word_vectors <- pmi_svd$u
+rownames(word_vectors) <- rownames(pmi_matrix)
+```
+
+**Word Synomyms**
+
+Now create word synomyms from the word vectors above.
+
+```{r synonyms}
+# Create a  function to identify synonyms using the word vectors created above:
+search_synonyms <- function(word_vectors, selected_vector) {
+    similarities <- word_vectors %*%
+        selected_vector %>%
+        tidy() %>%
+        as_tibble() %>%
+        rename(token = .rownames,
+               similarity = unrowname.x.)
+    similarities %>%
+        arrange(-similarity)
+}
+# Let's see what the top synonyms are for the term "sydney"
+search_synonyms(word_vectors,word_vectors["wind",])
+```
+
+```{r melbourne synonym}
+# Let's see what the top synonyms are for the term "melbourne"
+search_synonyms(word_vectors,word_vectors["melbourne",])
+```
+
+## Data Visualisation
+
+Now create a synonym plot comparing the two cities.
+
+```{r synomym plot}
+sydney <- search_synonyms(word_vectors, word_vectors["sydney",])
+melbourne <- search_synonyms(word_vectors, word_vectors["melbourne",])
+sydney %>%
+    mutate(selected = "sydney") %>%
+    bind_rows(melbourne %>%
+                  mutate(selected = "melbourne")) %>%
+    group_by(selected) %>%
+    top_n(20, similarity) %>%
+    ungroup %>%
+    mutate(token = reorder(token, similarity)) %>%
+    ggplot(aes(token, similarity, fill = selected)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~selected, scales = "free") +
+    coord_flip() +
+    theme(strip.text=element_text(hjust=0)) +
+    scale_fill_viridis_d(option = "E")+
+    labs(x = NULL, title = "What word vectors are most similar to 'Sydney' and 'Melbourne'?")
+```
+
+
+So, what if we took the cup out of Melbourne?
+
+
+```{r word math}
+mystery_sport <- word_vectors["melbourne",] - word_vectors["cup",] + word_vectors["sydney",]
+search_synonyms(word_vectors, mystery_sport)
+```
+
+
+## Conclusions
+
+From these plots the cities are synonyms of each other, as expected.
+
+But it  appears that the sport talked about in Sydney is football, in particular Wanderers Football Club.
+
+
+## References
+
+```{r package citations}
+# Package citations as seen in freerangestats.info/blog/2019/03/30/afl-elo-adjusted
+thankr::shoulders() %>% 
+  mutate(maintainer = str_squish(gsub("<.+>", "", maintainer))) %>%
+  group_by(maintainer) %>%
+  summarise(`Number packages` = sum(no_packages),
+            packages = paste(packages, collapse = ", ")) %>%
+  knitr::kable() 
+
+```
+
